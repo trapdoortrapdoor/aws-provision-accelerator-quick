@@ -1,0 +1,148 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <title>AWS Provision Accelerator - Dashboard</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .status { padding: 8px 16px; border-radius: 4px; font-weight: 600; }
+        .status.running { background: #e3f2fd; color: #1565c0; }
+        .status.complete { background: #e8f5e9; color: #2e7d32; }
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-bottom: 20px; }
+        .metric-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .metric-value { font-size: 2em; font-weight: 700; color: #1a1a1a; }
+        .metric-label { color: #666; font-size: 0.9em; margin-top: 4px; }
+        .provision-list { background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; }
+        .provision-header { padding: 16px 20px; border-bottom: 1px solid #eee; font-weight: 600; }
+        .provision-row { display: grid; grid-template-columns: 150px 1fr 100px 100px; padding: 12px 20px; border-bottom: 1px solid #eee; align-items: center; }
+        .provision-row:last-child { border-bottom: none; }
+        .resource-bar { display: flex; gap: 4px; height: 24px; }
+        .resource { flex: 1; height: 100%; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 0.7em; font-weight: 600; color: white; }
+        .resource.pending { background: #90a4ae; }
+        .resource.creating { background: #ffb74d; }
+        .resource.complete { background: #66bb6a; }
+        .resource.cached { background: #42a5f5; }
+        .cache-badge { background: #e3f2fd; color: #1565c0; padding: 2px 8px; border-radius: 12px; font-size: 0.75em; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AWS Provision Accelerator Dashboard</h1>
+            <span class="status running" id="status">LIVE</span>
+        </div>
+        
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-value" id="uptime">0s</div>
+                <div class="metric-label">Uptime</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="cacheRate">0%</div>
+                <div class="metric-label">Cache Hit Rate</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="totalProvisions">0</div>
+                <div class="metric-label">Total Provisions</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value" id="avgTime">0ms</div>
+                <div class="metric-label">Avg Provision Time</div>
+            </div>
+        </div>
+        
+        <div class="provision-list">
+            <div class="provision-header">Active Provisions</div>
+            <div id="provisions"></div>
+        </div>
+    </div>
+    
+    <script>
+        const ws = new WebSocket('ws://localhost:9877');
+        const provisionsEl = document.getElementById('provisions');
+        const metrics = { provisions: [], cache: { hits: 0, misses: 0 } };
+        
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'init') {
+                Object.assign(metrics, msg.data);
+                renderAll();
+            } else if (msg.type === 'provision_start') {
+                metrics.provisions.push(msg.data);
+                renderProvision(msg.data);
+            } else if (msg.type === 'provision_update') {
+                updateProvision(msg.data);
+            } else if (msg.type === 'provision_complete') {
+                completeProvision(msg.data);
+            }
+            updateMetrics();
+        };
+        
+        function renderAll() {
+            provisionsEl.innerHTML = '';
+            metrics.provisions.forEach(renderProvision);
+            updateMetrics();
+        }
+        
+        function renderProvision(p) {
+            const row = document.createElement('div');
+            row.className = 'provision-row';
+            row.id = 'prov-' + p.id;
+            row.innerHTML = `
+                <span>${p.id}</span>
+                <div class="resource-bar" id="bar-${p.id}"></div>
+                <span>${p.status}</span>
+                <span id="time-${p.id}">0s</span>
+            `;
+            provisionsEl.appendChild(row);
+            p.resources.forEach(r => {
+                const bar = document.getElementById('bar-' + p.id);
+                if (bar) {
+                    const res = document.createElement('div');
+                    res.className = 'resource ' + (r.status === 'complete' ? (r.cached ? 'cached' : 'complete') : r.status.toLowerCase());
+                    res.textContent = r.type;
+                    bar.appendChild(res);
+                }
+            });
+        }
+        
+        function updateProvision(data) {
+            const bar = document.getElementById('bar-' + data.sandboxName);
+            if (bar) {
+                const res = bar.querySelector('.resource.pending, .resource.creating');
+                if (res) {
+                    res.className = 'resource ' + (data.cached ? 'cached' : 'complete');
+                }
+            }
+        }
+        
+        function completeProvision(data) {
+            const row = document.getElementById('prov-' + data.sandboxName);
+            if (row) {
+                row.querySelector('span:nth-child(3)').textContent = 'complete';
+                row.querySelector('span:nth-child(4)').textContent = data.duration + 'ms';
+            }
+        }
+        
+        function updateMetrics() {
+            const hits = metrics.cache.hits || 0;
+            const misses = metrics.cache.misses || 0;
+            const rate = hits + misses > 0 ? Math.round(hits / (hits + misses) * 100) : 0;
+            document.getElementById('cacheRate').textContent = rate + '%';
+            document.getElementById('totalProvisions').textContent = metrics.provisions.length;
+            
+            const complete = metrics.provisions.filter(p => p.status === 'complete');
+            const avgTime = complete.length > 0 
+                ? Math.round(complete.reduce((a, p) => a + (p.duration || 0), 0) / complete.length) 
+                : 0;
+            document.getElementById('avgTime').textContent = avgTime + 'ms';
+            
+            document.getElementById('uptime').textContent = Math.round((Date.now() - metrics.startTime) / 1000) + 's';
+        }
+        
+        setInterval(updateMetrics, 1000);
+    </script>
+</body>
+</html>
