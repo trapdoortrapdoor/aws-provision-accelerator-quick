@@ -34,8 +34,8 @@ Set the following environment variables:
 
 ```bash
 # AWS Credentials (required for provisioning)
-export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7WCICKLE
-export AWS_SECRET_ACCESS_KEY=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
+export AWS_ACCESS_KEY_ID=<INSET KEY>
+export AWS_SECRET_ACCESS_KEY=<INSERT KEY>
 export AWS_REGION=us-east-1
 
 # Accelerator Configuration
